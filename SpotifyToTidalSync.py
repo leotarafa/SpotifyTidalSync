@@ -1,18 +1,29 @@
+import os
+from dotenv import load_dotenv
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import tidalapi
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
-# Spotify API Credentials
-SPOTIFY_CLIENT_ID = 'your_spotify_client_id'
-SPOTIFY_CLIENT_SECRET = 'your_spotify_client_secret'
-SPOTIFY_REDIRECT_URI = 'http://localhost:8888/callback'
+# Load environment variables from .env file
+load_dotenv()
+
+# Securely load credentials
+SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
+SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
+SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI')
+TIDAL_USERNAME = os.getenv('TIDAL_USERNAME')
+TIDAL_PASSWORD = os.getenv('TIDAL_PASSWORD')
+
+# Validate credentials
+if not all([SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, TIDAL_USERNAME, TIDAL_PASSWORD]):
+    raise ValueError("Missing one or more required environment variables. Check your .env file.")
 
 # TIDAL Login
 def tidal_login():
     session = tidalapi.Session()
-    session.login('your_tidal_username', 'your_tidal_password')
+    session.login(TIDAL_USERNAME, TIDAL_PASSWORD)
     return session
 
 # Spotify Login
@@ -25,7 +36,21 @@ def spotify_login():
     ))
     return sp
 
-# Fetch Spotify Tracks
+# Fetch All Spotify Playlists
+def get_spotify_playlists(sp):
+    playlists = sp.current_user_playlists()
+    playlist_data = []
+    while playlists:
+        for playlist in playlists['items']:
+            playlist_data.append({
+                'id': playlist['id'],
+                'name': playlist['name'],
+                'owner': playlist['owner']['display_name']
+            })
+        playlists = sp.next(playlists)
+    return playlist_data
+
+# Fetch Spotify Tracks for a Playlist
 def get_spotify_tracks(sp, playlist_id):
     results = sp.playlist_tracks(playlist_id)
     tracks = []
@@ -87,17 +112,19 @@ def main():
     sp = spotify_login()
     tidal_session = tidal_login()
 
-    # Replace with your Spotify playlist ID
-    spotify_playlist_id = 'your_spotify_playlist_id'
+    print("Fetching all saved Spotify playlists...")
+    playlists = get_spotify_playlists(sp)
 
-    print("Fetching Spotify tracks...")
-    spotify_tracks = get_spotify_tracks(sp, spotify_playlist_id)
+    print(f"Found {len(playlists)} playlists.")
+    for playlist in playlists:
+        print(f"Processing playlist: {playlist['name']} (Owner: {playlist['owner']})")
+        spotify_tracks = get_spotify_tracks(sp, playlist['id'])
+        
+        print(f"Fetching existing TIDAL tracks...")
+        tidal_existing_tracks = get_tidal_tracks(tidal_session)
 
-    print("Fetching existing TIDAL tracks...")
-    tidal_existing_tracks = get_tidal_tracks(tidal_session)
-
-    print("Syncing to TIDAL...")
-    sync_to_tidal(tidal_session, spotify_tracks, tidal_existing_tracks)
+        print(f"Syncing playlist '{playlist['name']}' to TIDAL...")
+        sync_to_tidal(tidal_session, spotify_tracks, tidal_existing_tracks)
 
 if __name__ == "__main__":
     main()
