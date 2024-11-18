@@ -124,17 +124,3 @@ git push origin feature-name
 License
 
 This project is licensed under the MIT License. See the LICENSE file for details.
-
-Contact
-
-For issues or inquiries, please open an issue on the GitHub repository.
-
----
-
-### Highlights:
-- **Structured table of contents** for quick navigation.
-- **Environment Variables table** for clarity.
-- A **"Known Issues"** section to address potential user concerns.
-- **Detailed setup instructions** for Spotify API and Tidal credentials.
-
-Let me know if you'd like to tweak anything further!
