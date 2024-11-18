@@ -4,6 +4,7 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import tidalapi
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
 import time
 
 # Load environment variables from .env file
@@ -15,25 +16,40 @@ SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
 SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI')
 TIDAL_USERNAME = os.getenv('TIDAL_USERNAME')
 TIDAL_PASSWORD = os.getenv('TIDAL_PASSWORD')
+SYNC_PLAYLISTS = os.getenv('SYNC_PLAYLISTS', 'all')  # Comma-separated playlist names or 'all'
 
 # Validate credentials
 if not all([SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, TIDAL_USERNAME, TIDAL_PASSWORD]):
     raise ValueError("Missing one or more required environment variables. Check your .env file.")
 
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 # TIDAL Login
 def tidal_login():
     session = tidalapi.Session()
-    session.login(TIDAL_USERNAME, TIDAL_PASSWORD)
+    try:
+        session.login(TIDAL_USERNAME, TIDAL_PASSWORD)
+        logger.info("Logged into TIDAL successfully.")
+    except Exception as e:
+        logger.error(f"Failed to log into TIDAL: {e}")
+        raise
     return session
 
 # Spotify Login
 def spotify_login():
-    sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-        client_id=SPOTIFY_CLIENT_ID,
-        client_secret=SPOTIFY_CLIENT_SECRET,
-        redirect_uri=SPOTIFY_REDIRECT_URI,
-        scope="playlist-read-private"
-    ))
+    try:
+        sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
+            client_id=SPOTIFY_CLIENT_ID,
+            client_secret=SPOTIFY_CLIENT_SECRET,
+            redirect_uri=SPOTIFY_REDIRECT_URI,
+            scope="playlist-read-private"
+        ))
+        logger.info("Logged into Spotify successfully.")
+    except Exception as e:
+        logger.error(f"Failed to log into Spotify: {e}")
+        raise
     return sp
 
 # Fetch All Spotify Playlists
@@ -56,19 +72,23 @@ def get_spotify_tracks(sp, playlist_id):
     tracks = []
     for item in results['items']:
         track = item['track']
-        tracks.append({
-            'name': track['name'],
-            'artist': track['artists'][0]['name']
-        })
+        if track:
+            tracks.append({
+                'name': track['name'],
+                'artist': track['artists'][0]['name']
+            })
     return tracks
 
 # Fetch Existing Tracks in TIDAL
 def get_tidal_tracks(session):
     existing_tracks = set()
-    favorites = session.user.favorites.tracks()
-    for track in favorites:
-        track_key = f"{track.name.lower()}:{track.artist.name.lower()}"
-        existing_tracks.add(track_key)
+    try:
+        favorites = session.user.favorites.tracks()
+        for track in favorites:
+            track_key = f"{track.name.lower()}:{track.artist.name.lower()}"
+            existing_tracks.add(track_key)
+    except Exception as e:
+        logger.error(f"Error fetching TIDAL tracks: {e}")
     return existing_tracks
 
 # Add a Single Track to TIDAL
@@ -99,12 +119,12 @@ def sync_to_tidal(session, tracks, existing_tracks):
         }
         for future in as_completed(future_to_track):
             result = future.result()
-            print(result)
+            logger.info(result)
             if "Added to TIDAL" in result:
                 added_count += 1
             results.append(result)
 
-    print(f"Sync complete. {added_count} tracks added to TIDAL.")
+    logger.info(f"Sync complete. {added_count} tracks added to TIDAL.")
     return results
 
 # Main Sync Function
@@ -112,18 +132,26 @@ def main():
     sp = spotify_login()
     tidal_session = tidal_login()
 
-    print("Fetching all saved Spotify playlists...")
+    logger.info("Fetching all saved Spotify playlists...")
     playlists = get_spotify_playlists(sp)
 
-    print(f"Found {len(playlists)} playlists.")
+    # Filter playlists if specific ones are configured
+    if SYNC_PLAYLISTS != 'all':
+        sync_list = [p.strip().lower() for p in SYNC_PLAYLISTS.split(',')]
+        playlists = [p for p in playlists if p['name'].lower() in sync_list]
+        if not playlists:
+            logger.warning("No matching playlists found. Check your SYNC_PLAYLISTS variable.")
+            return
+
+    logger.info(f"Found {len(playlists)} playlists to process.")
     for playlist in playlists:
-        print(f"Processing playlist: {playlist['name']} (Owner: {playlist['owner']})")
+        logger.info(f"Processing playlist: {playlist['name']} (Owner: {playlist['owner']})")
         spotify_tracks = get_spotify_tracks(sp, playlist['id'])
-        
-        print(f"Fetching existing TIDAL tracks...")
+
+        logger.info(f"Fetching existing TIDAL tracks...")
         tidal_existing_tracks = get_tidal_tracks(tidal_session)
 
-        print(f"Syncing playlist '{playlist['name']}' to TIDAL...")
+        logger.info(f"Syncing playlist '{playlist['name']}' to TIDAL...")
         sync_to_tidal(tidal_session, spotify_tracks, tidal_existing_tracks)
 
 if __name__ == "__main__":
